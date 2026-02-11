@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -15,8 +15,9 @@ class User(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Хранятся только зашифрованные значения (расшифровка только при отображении/экспорте)
+    email: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     referrer_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("users.telegram_id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_subscribed: Mapped[bool] = mapped_column(Boolean, default=False)  # Подписан на закрытый канал = прошёл очный этап
@@ -91,6 +92,21 @@ class Grade(Base):
 
     def __repr__(self) -> str:
         return f"<Grade(id={self.id}, threshold={self.referral_threshold})>"
+
+
+class UtmToken(Base):
+    """Короткий токен для UTM (один зашифрованный значение → один токен)."""
+    __tablename__ = "utm_tokens"
+    __table_args__ = (UniqueConstraint("encrypted_value", "value_type", name="uq_utm_tokens_enc_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+    encrypted_value: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    value_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'email' | 'phone'
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<UtmToken(token={self.token}, type={self.value_type})>"
 
 
 class GradeClaim(Base):

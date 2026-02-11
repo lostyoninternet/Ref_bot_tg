@@ -1,4 +1,4 @@
-from .models import Base, User, Referral, Broadcast, Grade, GradeClaim
+from .models import Base, User, Referral, Broadcast, Grade, GradeClaim, UtmToken
 from .crud import (
     get_or_create_user,
     get_user_by_telegram_id,
@@ -24,6 +24,13 @@ from .crud import (
     create_grade_claim,
     get_user_grade_claims,
     has_grade_claim,
+    decrypt_email,
+    decrypt_phone,
+    get_or_create_utm_token,
+    get_encrypted_by_token,
+    get_referrer_by_utm_tokens,
+    get_referral_tokens_for_user,
+    get_all_utm_tokens_for_key_export,
 )
 from .session import get_session, init_db
 
@@ -34,6 +41,7 @@ __all__ = [
     "Broadcast",
     "Grade",
     "GradeClaim",
+    "UtmToken",
     "get_or_create_user",
     "get_user_by_telegram_id",
     "get_user_by_email",
@@ -58,6 +66,13 @@ __all__ = [
     "create_grade_claim",
     "get_user_grade_claims",
     "has_grade_claim",
+    "decrypt_email",
+    "decrypt_phone",
+    "get_or_create_utm_token",
+    "get_encrypted_by_token",
+    "get_referrer_by_utm_tokens",
+    "get_referral_tokens_for_user",
+    "get_all_utm_tokens_for_key_export",
     "get_session",
     "init_db",
 ]

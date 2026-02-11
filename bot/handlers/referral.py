@@ -3,7 +3,14 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from bot.config import settings
-from bot.database import get_session, get_user_referrals, get_user_by_telegram_id
+from bot.database import (
+    get_session,
+    get_user_referrals,
+    get_user_by_telegram_id,
+    get_referral_tokens_for_user,
+    decrypt_email,
+    decrypt_phone,
+)
 
 
 router = Router(name="referral")
@@ -12,20 +19,25 @@ router = Router(name="referral")
 @router.message(Command("myreferrals"))
 async def cmd_my_referrals(message: Message):
     """Show list of user's referrals (only confirmed ones)."""
-    from bot.database import get_user_by_telegram_id
-    
     user_id = message.from_user.id
     async with get_session() as session:
         user = await get_user_by_telegram_id(session, user_id)
-    ref_link = (
-        settings.get_referral_link(
-            username=user.username if user else None,
-            email=user.email if user else None,
-            phone=user.phone if user else None,
-        )
-        if user and user.email and user.phone
-        else "Укажи email и телефон (/start), чтобы получить ссылку."
-    )
+        if user and user.email and user.phone:
+            token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+            if not token_campaign and user.email:
+                token_campaign = decrypt_email(user.email) or user.email
+            if not token_content and user.phone:
+                token_content = decrypt_phone(user.phone) or user.phone
+            ref_link = (
+                settings.get_referral_link(
+                    username=user.username,
+                    token_campaign=token_campaign or "",
+                    token_content=token_content or "",
+                )
+                if (token_campaign and token_content) else "Укажи email и телефон (/start), чтобы получить ссылку."
+            )
+        else:
+            ref_link = "Укажи email и телефон (/start), чтобы получить ссылку."
     
     async with get_session() as session:
         referrals = await get_user_referrals(session, user_id)

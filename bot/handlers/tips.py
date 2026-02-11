@@ -152,22 +152,31 @@ async def show_tip_forums(callback: CallbackQuery):
 
 @router.callback_query(F.data == "tip_templates")
 async def show_tip_templates(callback: CallbackQuery):
-    """Show text templates with real UTM referral link (username, email, phone)."""
-    from bot.database import get_session, get_user_by_telegram_id
+    """Show text templates with real UTM referral link (tokens in UTM, not raw PII)."""
+    from bot.database import (
+        get_session,
+        get_user_by_telegram_id,
+        get_referral_tokens_for_user,
+        decrypt_email,
+        decrypt_phone,
+    )
     
     user_id = callback.from_user.id
+    ref_link = ""
     async with get_session() as session:
         user = await get_user_by_telegram_id(session, user_id)
-    
-    ref_link = (
-        settings.get_referral_link(
-            username=user.username if user else None,
-            email=user.email if user else None,
-            phone=user.phone if user else None,
-        )
-        if user
-        else ""
-    )
+        if user and user.email and user.phone:
+            token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+            if not token_campaign and user.email:
+                token_campaign = decrypt_email(user.email) or user.email
+            if not token_content and user.phone:
+                token_content = decrypt_phone(user.phone) or user.phone
+            if token_campaign and token_content:
+                ref_link = settings.get_referral_link(
+                    username=user.username,
+                    token_campaign=token_campaign,
+                    token_content=token_content,
+                )
     if not ref_link or (user and (not user.email or not user.phone)):
         ref_link = "[укажи email и телефон в /start — тогда здесь появится твоя ссылка]"
     

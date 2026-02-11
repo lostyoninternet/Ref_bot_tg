@@ -21,6 +21,10 @@ from bot.database import (
     get_users_for_grade,
     create_grade_claim,
     has_grade_claim,
+    get_referrer_by_utm_tokens,
+    decrypt_email,
+    decrypt_phone,
+    get_all_utm_tokens_for_key_export,
 )
 from bot.database.crud import (
     get_total_users_count,
@@ -581,13 +585,14 @@ async def start_csv_import(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "📥 <b>Импорт рефералов из CRM</b>\n\n"
         "Отправь CSV с выгрузкой из CRM.\n\n"
-        "<b>Поддерживаемые колонки (или алиасы):</b>\n"
+        "<b>Колонки (или алиасы):</b>\n"
         "• email школьника: <code>email</code>, <code>e-mail</code>, <code>email_registrant</code>\n"
-        "• email реферера: <code>utm_campaign</code>, <code>referrer_email</code>\n"
-        "• номер реферера: <code>utm_content</code>, <code>referrer_phone</code>\n\n"
-        "<b>Пример:</b>\n"
+        "• реферер: <code>utm_campaign</code>, <code>utm_content</code> — <i>короткие токены из ссылки бота</i> "
+        "или открытые email/номер (как раньше)\n\n"
+        "<b>Пример (токены из Битрикса):</b>\n"
         "<code>email,utm_campaign,utm_content\n"
-        "student@mail.ru,referrer@mail.ru,+79001234567</code>",
+        "student@mail.ru,a3Fk9xK2,mN7pQ1zR</code>\n\n"
+        "Реферер определяется по токенам или по email+номер.",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
@@ -652,9 +657,11 @@ async def process_csv_import(message: Message, state: FSMContext, bot: Bot):
                     skipped += 1
                     continue
                 
-                # Реферер: utm_campaign = почта реферера, utm_content = номер реферера
-                referrer = None
-                if utm_content:
+                # Реферер: utm_campaign и utm_content могут быть короткими токенами (из Битрикса) или открытые email/phone
+                referrer = await get_referrer_by_utm_tokens(
+                    session, utm_campaign.strip(), (utm_content or "").strip()
+                )
+                if not referrer and utm_content:
                     referrer = await get_user_by_email_and_phone(
                         session, utm_campaign, utm_content
                     )
@@ -768,15 +775,15 @@ async def export_users(callback_or_message: CallbackQuery | Message):
             "is_active"
         ])
         
-        # Data
+        # Data (email и phone в выгрузке — расшифрованные для админа)
         for user in users:
             ref_count = await get_user_referral_count(session, user.telegram_id)
             writer.writerow([
                 user.telegram_id,
                 user.username or "",
                 user.first_name or "",
-                user.email or "",
-                user.phone or "",
+                decrypt_email(user.email) or "",
+                decrypt_phone(user.phone) or "",
                 user.referrer_id or "",
                 ref_count,
                 user.created_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -785,18 +792,28 @@ async def export_users(callback_or_message: CallbackQuery | Message):
                 "Да" if user.is_active else "Нет"
             ])
     
-    # Convert to bytes
     csv_bytes = output.getvalue().encode("utf-8-sig")
-    
-    # Create file
     filename = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     file = BufferedInputFile(csv_bytes, filename=filename)
-    
     message = callback_or_message.message if is_callback else callback_or_message
-    
     await message.answer_document(
         file,
         caption=f"📥 Экспорт пользователей ({len(users)} записей)"
+    )
+    
+    # Второй файл — ключ для Битрикса: токен → расшифрованное значение (для VLOOKUP в Excel)
+    key_rows = await get_all_utm_tokens_for_key_export(session)
+    key_io = io.StringIO()
+    key_writer = csv.writer(key_io)
+    key_writer.writerow(["token", "type", "decrypted_value"])
+    for token, value_type, decrypted in key_rows:
+        key_writer.writerow([token, value_type, decrypted])
+    key_bytes = key_io.getvalue().encode("utf-8-sig")
+    key_filename = f"utm_key_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    key_file = BufferedInputFile(key_bytes, filename=key_filename)
+    await message.answer_document(
+        key_file,
+        caption="🔑 Ключ UTM: token → расшифрованные email/phone (для подстановки в выгрузку Битрикса)"
     )
     
     if is_callback:

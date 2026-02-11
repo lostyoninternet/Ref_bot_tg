@@ -14,6 +14,9 @@ from bot.database import (
     get_top_referrers,
     get_all_grades,
     get_user_grade_claims,
+    get_referral_tokens_for_user,
+    decrypt_email,
+    decrypt_phone,
 )
 from bot.database.crud import (
     get_user_rank,
@@ -125,26 +128,32 @@ async def cmd_stats(message: Message):
     await message.answer(stats_text, parse_mode="HTML")
 
 
-def _get_user_referral_link(user) -> str | None:
-    """Build UTM link for user. Returns None if email or phone missing."""
-    if not user:
+async def _get_user_referral_link(session, user) -> str | None:
+    """Строит UTM-ссылку: при включённом шифровании — короткие токены, иначе — открытые данные (legacy)."""
+    if not user or not user.email or not user.phone:
+        return None
+    token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+    if not token_campaign and user.email:
+        token_campaign = decrypt_email(user.email) or user.email
+    if not token_content and user.phone:
+        token_content = decrypt_phone(user.phone) or user.phone
+    if not token_campaign or not token_content:
         return None
     return settings.get_referral_link(
         username=user.username,
-        email=user.email,
-        phone=user.phone,
+        token_campaign=token_campaign,
+        token_content=token_content,
     )
 
 
 @router.callback_query(F.data == "my_link")
 async def show_my_link(callback: CallbackQuery):
-    """Show user's referral link (UTM: source=referal, medium=ник, campaign=почта, content=номер)."""
+    """Show user's referral link (UTM: short tokens in campaign/content, not raw email/phone)."""
     user_id = callback.from_user.id
     
     async with get_session() as session:
         user = await get_user_by_telegram_id(session, user_id)
-    
-    ref_link = _get_user_referral_link(user)
+        ref_link = await _get_user_referral_link(session, user)
     
     if not user or not user.email or not user.phone:
         await callback.message.edit_text(
@@ -301,10 +310,12 @@ async def show_edit_profile(callback: CallbackQuery):
     if not user:
         await callback.answer("❌ Пользователь не найден", show_alert=True)
         return
+    plain_email = decrypt_email(user.email)
+    plain_phone = decrypt_phone(user.phone)
     text = (
         "✏️ <b>Изменить контакты</b>\n\n"
-        f"📧 Email: <code>{user.email or '—'}</code>\n"
-        f"📱 Телефон: <code>{user.phone or '—'}</code>\n\n"
+        f"📧 Email: <code>{plain_email or '—'}</code>\n"
+        f"📱 Телефон: <code>{plain_phone or '—'}</code>\n\n"
         "Выбери, что изменить. От этого зависит твоя реферальная ссылка."
     )
     await callback.message.edit_text(

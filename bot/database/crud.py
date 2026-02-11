@@ -1,10 +1,45 @@
 import json
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User, Referral, Broadcast, Grade, GradeClaim
+from bot.config import settings
+from bot.crypto import encrypt as crypto_encrypt, decrypt as crypto_decrypt, generate_token
+from .models import User, Referral, Broadcast, Grade, GradeClaim, UtmToken
+
+
+def _encryption_enabled() -> bool:
+    """Шифрование включено, если задан ключ (не пустой и не нули)."""
+    key = getattr(settings, "encryption_key_bytes", None) or b""
+    return len(key) >= 16 and key != b"\x00" * 32
+
+
+def _encrypt(plain: str) -> str:
+    if not plain or not _encryption_enabled():
+        return plain
+    return crypto_encrypt(plain, settings.encryption_key_bytes)
+
+
+def _decrypt(cipher: str) -> str:
+    if not cipher:
+        return ""
+    if not _encryption_enabled():
+        return cipher
+    try:
+        return crypto_decrypt(cipher, settings.encryption_key_bytes)
+    except Exception:
+        return cipher  # legacy plain value
+
+
+def decrypt_email(encrypted_email: Optional[str]) -> str:
+    """Расшифровать email для отображения (или вернуть как есть, если не зашифрован)."""
+    return ( _decrypt(encrypted_email) if encrypted_email else "" ) or ""
+
+
+def decrypt_phone(encrypted_phone: Optional[str]) -> str:
+    """Расшифровать телефон для отображения."""
+    return ( _decrypt(encrypted_phone) if encrypted_phone else "" ) or ""
 
 
 # ============ User CRUD ============
@@ -53,9 +88,16 @@ async def get_or_create_user(
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
-    """Get user by email."""
+    """Get user by email (plain). Внутри ищем по зашифрованному значению."""
+    email_clean = email.lower().strip()
+    enc = _encrypt(email_clean)
+    result = await session.execute(select(User).where(User.email == enc))
+    row = result.scalar_one_or_none()
+    if row:
+        return row
+    # Legacy: если в БД ещё хранится открытый email
     result = await session.execute(
-        select(User).where(func.lower(User.email) == email.lower())
+        select(User).where(func.lower(User.email) == email_clean)
     )
     return result.scalar_one_or_none()
 
@@ -65,9 +107,22 @@ async def get_user_by_email_and_phone(
 ) -> Optional[User]:
     """Get user by email and phone (for finding referrer from UTM)."""
     norm_phone = normalize_phone(phone)
+    email_clean = email.lower().strip()
+    enc_email = _encrypt(email_clean)
+    enc_phone = _encrypt(norm_phone)
     result = await session.execute(
         select(User).where(
-            func.lower(User.email) == email.lower(),
+            User.email == enc_email,
+            User.phone == enc_phone,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        return row
+    # Legacy: plain in DB
+    result = await session.execute(
+        select(User).where(
+            func.lower(User.email) == email_clean,
             User.phone == norm_phone,
         )
     )
@@ -75,10 +130,10 @@ async def get_user_by_email_and_phone(
 
 
 async def update_user_email(session: AsyncSession, telegram_id: int, email: str) -> Optional[User]:
-    """Update user's email."""
+    """Update user's email (сохраняем зашифрованным)."""
     user = await get_user_by_telegram_id(session, telegram_id)
     if user:
-        user.email = email.lower().strip()
+        user.email = _encrypt(email.lower().strip())
         await session.flush()
     return user
 
@@ -90,12 +145,101 @@ def normalize_phone(phone: str) -> str:
 
 
 async def update_user_phone(session: AsyncSession, telegram_id: int, phone: str) -> Optional[User]:
-    """Update user's phone number."""
+    """Update user's phone number (сохраняем зашифрованным)."""
     user = await get_user_by_telegram_id(session, telegram_id)
     if user:
-        user.phone = normalize_phone(phone)
+        user.phone = _encrypt(normalize_phone(phone))
         await session.flush()
     return user
+
+
+# ============ UTM Tokens (короткие токены для ссылок и выгрузки) ============
+
+async def get_or_create_utm_token(
+    session: AsyncSession, encrypted_value: str, value_type: str
+) -> str:
+    """Вернуть короткий токен для зашифрованного значения (email или phone). Один значение → один токен."""
+    if not encrypted_value or value_type not in ("email", "phone"):
+        return ""
+    result = await session.execute(
+        select(UtmToken).where(
+            UtmToken.encrypted_value == encrypted_value,
+            UtmToken.value_type == value_type,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        return row.token
+    token = generate_token(8)
+    # Убедиться, что токен уникален
+    while True:
+        r = await session.execute(select(UtmToken).where(UtmToken.token == token))
+        if r.scalar_one_or_none() is None:
+            break
+        token = generate_token(8)
+    session.add(UtmToken(token=token, encrypted_value=encrypted_value, value_type=value_type))
+    await session.flush()
+    return token
+
+
+async def get_encrypted_by_token(session: AsyncSession, token: str) -> Optional[str]:
+    """По короткому токену из UTM вернуть зашифрованное значение (или None)."""
+    if not token:
+        return None
+    result = await session.execute(select(UtmToken).where(UtmToken.token == token.strip()))
+    row = result.scalar_one_or_none()
+    return row.encrypted_value if row else None
+
+
+async def get_referrer_by_utm_tokens(
+    session: AsyncSession, token_campaign: str, token_content: str
+) -> Optional[User]:
+    """
+    Найти реферера по токенам из UTM (utm_campaign, utm_content).
+    token_campaign = токен почты, token_content = токен телефона.
+    """
+    enc_email = await get_encrypted_by_token(session, token_campaign)
+    enc_phone = await get_encrypted_by_token(session, token_content)
+    if not enc_email or not enc_phone:
+        return None
+    result = await session.execute(
+        select(User).where(
+            User.email == enc_email,
+            User.phone == enc_phone,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_referral_tokens_for_user(
+    session: AsyncSession, user: User
+) -> Tuple[str, str]:
+    """
+    Вернуть (token_campaign, token_content) для реферальной ссылки.
+    Если email/phone не заданы или шифрование выключено — пустые строки.
+    """
+    token_campaign = ""
+    token_content = ""
+    if not _encryption_enabled():
+        return token_campaign, token_content
+    if user.email:
+        token_campaign = await get_or_create_utm_token(session, user.email, "email")
+    if user.phone:
+        token_content = await get_or_create_utm_token(session, user.phone, "phone")
+    return token_campaign, token_content
+
+
+async def get_all_utm_tokens_for_key_export(
+    session: AsyncSession,
+) -> List[Tuple[str, str, str]]:
+    """Список (token, value_type, decrypted_value) для выгрузки «ключ» в Excel."""
+    result = await session.execute(select(UtmToken))
+    rows = result.scalars().all()
+    out = []
+    for r in rows:
+        dec = _decrypt(r.encrypted_value)
+        out.append((r.token, r.value_type, dec))
+    return out
 
 
 async def link_referral_by_email(
