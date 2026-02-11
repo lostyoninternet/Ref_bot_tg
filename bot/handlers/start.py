@@ -7,11 +7,11 @@ from aiogram.fsm.state import State, StatesGroup
 import re
 
 from bot.config import settings
-from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription
+from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription, get_contacts_section_visible
 from bot.database.crud import update_user_email, update_user_phone, normalize_phone
 from bot.keyboards.inline import get_subscription_keyboard, get_cabinet_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard, get_admin_reply_keyboard
-from bot.services.subscription import check_subscription, get_channel_invite_link
+from bot.services.subscription import check_subscription
 
 
 router = Router(name="start")
@@ -43,10 +43,8 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
     is_subscribed = await check_subscription(bot, user_id, settings.CHANNEL_ID)
     
     if not is_subscribed:
-        # User is not in the private channel = hasn't passed the event yet
-        channel_link = await get_channel_invite_link(bot, settings.CHANNEL_ID)
-        
-        # Create/update user record
+        # Пользователь ещё не в закрытом канале — предлагаем заявку на очный этап
+        application_url = settings.get_application_utm_url()
         async with get_session() as session:
             await get_or_create_user(
                 session,
@@ -55,7 +53,6 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
                 first_name=first_name,
                 is_admin=is_admin,
             )
-        
         await message.answer(
             f"👋 Привет, {first_name}!\n\n"
             "Этот бот — часть реферальной программы «Алабуга Политех».\n\n"
@@ -66,9 +63,9 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
             "4. Достигай рубежей (рубеж — 10 твоих рефералов) и получай награды (например, мерч)!\n\n"
             "⚠️ <b>Доступ к боту</b> открывается после прохождения очного этапа "
             "и вступления в закрытый канал.\n\n"
-            "Если очный этап уже пройден — подпишись на канал и нажми кнопку проверки.",
+            "Оставь заявку на очный этап по кнопке ниже. После прохождения этапа — зайди в канал и нажми «Проверить подписку».",
             parse_mode="HTML",
-            reply_markup=get_subscription_keyboard(channel_link)
+            reply_markup=get_subscription_keyboard(application_url)
         )
         return
     
@@ -114,8 +111,9 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
         return
     
     # Existing user with email and phone - show cabinet
-    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard()
-    
+    async with get_session() as session:
+        show_contacts = await get_contacts_section_visible(session)
+    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
     await message.answer(
         f"👋 С возвращением, {first_name}!\n\n"
         "Открывай личный кабинет и приглашай друзей на очный этап!",
@@ -193,10 +191,10 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
         await update_user_phone(session, user_id, phone)
     
     await state.clear()
-    
     is_admin = user_id in settings.ADMIN_IDS
-    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard()
-    
+    async with get_session() as session:
+        show_contacts = await get_contacts_section_visible(session)
+    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
     await message.answer(
         f"✅ Номер <code>{normalize_phone(phone)}</code> сохранён!\n\n"
         "Теперь можно участвовать в реферальной программе.\n\n"
@@ -262,7 +260,9 @@ async def check_subscription_callback(callback: CallbackQuery, bot: Bot, state: 
         )
     else:
         is_admin = user_id in settings.ADMIN_IDS
-        reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard()
+        async with get_session() as session:
+            show_contacts = await get_contacts_section_visible(session)
+        reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
         await callback.message.answer(
             "🎉 Отлично! Подписка подтверждена.\n\n"
             "Теперь у тебя есть доступ ко всем функциям бота.",

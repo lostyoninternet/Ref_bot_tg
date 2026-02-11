@@ -15,6 +15,8 @@ from bot.database import (
     get_all_grades,
     get_user_grade_claims,
     get_referral_tokens_for_user,
+    get_contacts_section_visible,
+    get_contact_entries,
     decrypt_email,
     decrypt_phone,
 )
@@ -30,6 +32,7 @@ from bot.keyboards.inline import (
     get_back_to_cabinet_keyboard,
     get_profile_edit_keyboard,
 )
+from bot.keyboards.reply import CONTACTS_BUTTON_TEXT
 
 
 router = Router(name="cabinet")
@@ -47,6 +50,30 @@ def _is_valid_email(s: str) -> bool:
 def _is_valid_phone(s: str) -> bool:
     p = normalize_phone(s or "")
     return len(p) >= 10 and p.replace("+", "").isdigit()
+
+
+@router.message(F.text == CONTACTS_BUTTON_TEXT)
+async def show_contacts_list(message: Message):
+    """Показать список контактов (тг_ник — за что отвечает). Видимость и список задаёт админ."""
+    async with get_session() as session:
+        visible = await get_contacts_section_visible(session)
+        if not visible:
+            await message.answer("Сейчас раздел контактов недоступен.")
+            return
+        entries = await get_contact_entries(session, active_only=True)
+    if not entries:
+        await message.answer("Пока нет контактов для связи. Обратись к организаторам.")
+        return
+    lines = ["📞 <b>Остались вопросы? Свяжись с нами:</b>\n"]
+    for e in entries:
+        nick = (e.tg_username or "").strip()
+        desc = (e.description or "").strip()
+        if nick.startswith("@"):
+            link_username = nick[1:].strip()
+            lines.append(f"• <a href=\"https://t.me/{link_username}\">{nick}</a> — {desc}")
+        else:
+            lines.append(f"• {nick} — {desc}")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @router.message(Command("cabinet"))

@@ -5,13 +5,13 @@ from bot.config import settings
 from bot.services.grade import parse_rewards
 
 
-def get_subscription_keyboard(channel_url: str) -> InlineKeyboardMarkup:
-    """Keyboard for subscription check."""
+def get_subscription_keyboard(application_url: str) -> InlineKeyboardMarkup:
+    """Клавиатура для неподписанных: заявка на очный этап + проверка подписки."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="📢 Подписаться на канал",
-            url=channel_url
+            text="📋 Оставить заявку на очный этап",
+            url=application_url
         )
     )
     builder.row(
@@ -96,6 +96,9 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="📊 Управление грейдами", callback_data="admin_grades"),
     )
+    builder.row(
+        InlineKeyboardButton(text="📞 Кнопка «Связаться»", callback_data="admin_contacts"),
+    )
     return builder.as_markup()
 
 
@@ -171,5 +174,39 @@ def get_back_to_grades_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="◀️ К списку грейдов", callback_data="admin_grades"),
+    )
+    return builder.as_markup()
+
+
+# ============ Contacts admin keyboards ============
+
+def get_contacts_manage_keyboard(visible: bool, entries: list) -> InlineKeyboardMarkup:
+    """Клавиатура управления контактами: видимость, добавить, по каждому контакту — редактировать/удалить, назад."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="🙈 Скрыть кнопку у пользователей" if visible else "👁 Показать кнопку у пользователей",
+            callback_data="admin_contacts_toggle",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить контакт", callback_data="admin_contacts_add"),
+    )
+    for e in entries:
+        builder.row(
+            InlineKeyboardButton(text=f"✏️ {e.tg_username[:25]}…" if len(e.tg_username) > 25 else f"✏️ {e.tg_username}", callback_data=f"admin_contact_edit_{e.id}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"admin_contact_del_{e.id}"),
+        )
+    builder.row(
+        InlineKeyboardButton(text="◀️ В админ-панель", callback_data="admin_contacts_back"),
+    )
+    return builder.as_markup()
+
+
+def get_contacts_cancel_keyboard() -> InlineKeyboardMarkup:
+    """Отмена при добавлении/редактировании контакта."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="admin_contacts"),
     )
     return builder.as_markup()

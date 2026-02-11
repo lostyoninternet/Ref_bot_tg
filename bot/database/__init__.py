@@ -1,4 +1,4 @@
-from .models import Base, User, Referral, Broadcast, Grade, GradeClaim, UtmToken
+from .models import Base, User, Referral, Broadcast, Grade, GradeClaim, UtmToken, ContactEntry, BotSetting
 from .crud import (
     get_or_create_user,
     get_user_by_telegram_id,
@@ -31,6 +31,13 @@ from .crud import (
     get_referrer_by_utm_tokens,
     get_referral_tokens_for_user,
     get_all_utm_tokens_for_key_export,
+    get_contacts_section_visible,
+    set_contacts_section_visible,
+    get_contact_entries,
+    create_contact_entry,
+    get_contact_entry_by_id,
+    update_contact_entry,
+    delete_contact_entry,
 )
 from .session import get_session, init_db
 
@@ -42,6 +49,8 @@ __all__ = [
     "Grade",
     "GradeClaim",
     "UtmToken",
+    "ContactEntry",
+    "BotSetting",
     "get_or_create_user",
     "get_user_by_telegram_id",
     "get_user_by_email",
@@ -73,6 +82,13 @@ __all__ = [
     "get_referrer_by_utm_tokens",
     "get_referral_tokens_for_user",
     "get_all_utm_tokens_for_key_export",
+    "get_contacts_section_visible",
+    "set_contacts_section_visible",
+    "get_contact_entries",
+    "create_contact_entry",
+    "get_contact_entry_by_id",
+    "update_contact_entry",
+    "delete_contact_entry",
     "get_session",
     "init_db",
 ]

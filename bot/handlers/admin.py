@@ -25,6 +25,13 @@ from bot.database import (
     decrypt_email,
     decrypt_phone,
     get_all_utm_tokens_for_key_export,
+    get_contacts_section_visible,
+    set_contacts_section_visible,
+    get_contact_entries,
+    create_contact_entry,
+    get_contact_entry_by_id,
+    update_contact_entry,
+    delete_contact_entry,
 )
 from bot.database.crud import (
     get_total_users_count,
@@ -41,6 +48,8 @@ from bot.keyboards.inline import (
     get_grades_list_keyboard,
     get_grade_manage_keyboard,
     get_back_to_grades_keyboard,
+    get_contacts_manage_keyboard,
+    get_contacts_cancel_keyboard,
 )
 from bot.services.broadcast import BroadcastService
 from bot.services.grade import GradeService
@@ -56,6 +65,8 @@ class AdminStates(StatesGroup):
     waiting_grade_threshold = State()
     waiting_grade_rewards = State()
     waiting_grade_edit_rewards = State()  # data: grade_id
+    waiting_contact_username = State()
+    waiting_contact_description = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -538,6 +549,150 @@ async def cancel_action(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_admin_keyboard()
     )
     await callback.answer("Отменено")
+
+
+# ============ Contacts (кнопка «Связаться») ============
+
+async def _render_contacts_admin_message(visible: bool, entries: list) -> str:
+    """Текст экрана управления контактами."""
+    status = "✅ Кнопка «Остались вопросы? Связаться» <b>показана</b> пользователям." if visible else "🙈 Кнопка <b>скрыта</b> у пользователей."
+    lines = [f"📞 <b>Управление контактами</b>\n\n{status}\n\n<b>Список контактов (тг_ник — за что отвечает):</b>"]
+    if not entries:
+        lines.append("\nПока пусто. Добавь контакт — он появится у пользователей при нажатии «Связаться».")
+    else:
+        for e in entries:
+            lines.append(f"\n• {e.tg_username} — {e.description}")
+    return "".join(lines)
+
+
+@router.callback_query(F.data == "admin_contacts")
+@router.callback_query(F.data == "admin_contacts_back")
+@router.callback_query(F.data == "admin_contacts_toggle")
+@router.callback_query(F.data.startswith("admin_contact_del_"))
+async def admin_contacts_manage(callback: CallbackQuery, state: FSMContext):
+    """Экран контактов: список, видимость, добавить/редактировать/удалить."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    await state.clear()
+    data = callback.data
+    if data == "admin_contacts_back":
+        await callback.message.edit_text(
+            "⚙️ <b>Админ-панель</b>\n\nВыбери действие:",
+            parse_mode="HTML",
+            reply_markup=get_admin_keyboard(),
+        )
+        await callback.answer()
+        return
+    async with get_session() as session:
+        if data == "admin_contacts_toggle":
+            visible = await get_contacts_section_visible(session)
+            await set_contacts_section_visible(session, not visible)
+            await callback.answer("Видимость обновлена", show_alert=False)
+        elif data.startswith("admin_contact_del_"):
+            try:
+                entry_id = int(data.split("_")[-1])
+                await delete_contact_entry(session, entry_id)
+                await callback.answer("Контакт удалён", show_alert=False)
+            except (ValueError, TypeError):
+                pass
+        visible = await get_contacts_section_visible(session)
+        entries = await get_contact_entries(session, active_only=False)
+    text = await _render_contacts_admin_message(visible, entries)
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_contacts_manage_keyboard(visible, entries),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_contacts_add")
+async def admin_contacts_add_start(callback: CallbackQuery, state: FSMContext):
+    """Начать добавление контакта: запросить тг_ник."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(AdminStates.waiting_contact_username)
+    await state.update_data(contact_entry_id=None)
+    await callback.message.edit_text(
+        "📞 <b>Новый контакт</b>\n\nВведи <b>тг_ник</b> (например @hr_alabuga или Имя Фамилия):",
+        parse_mode="HTML",
+        reply_markup=get_contacts_cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_contact_edit_"))
+async def admin_contacts_edit_start(callback: CallbackQuery, state: FSMContext):
+    """Начать редактирование контакта."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    try:
+        entry_id = int(callback.data.split("_")[-1])
+    except (ValueError, TypeError):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    async with get_session() as session:
+        entry = await get_contact_entry_by_id(session, entry_id)
+    if not entry:
+        await callback.answer("Контакт не найден", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(AdminStates.waiting_contact_username)
+    await state.update_data(contact_entry_id=entry_id)
+    await callback.message.edit_text(
+        f"📞 <b>Редактирование контакта</b>\n\nТекущий тг_ник: <code>{entry.tg_username}</code>\n\nВведи новый <b>тг_ник</b>:",
+        parse_mode="HTML",
+        reply_markup=get_contacts_cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_contact_username, F.text)
+async def admin_contacts_username_entered(message: Message, state: FSMContext):
+    """Принят тг_ник — запросить описание (за что отвечает)."""
+    if not is_admin(message.from_user.id):
+        return
+    await state.update_data(contact_tg_username=(message.text or "").strip())
+    await state.set_state(AdminStates.waiting_contact_description)
+    await message.answer(
+        "Введи <b>за что отвечает</b> этот контакт (например: поступление, общие вопросы):",
+        parse_mode="HTML",
+        reply_markup=get_contacts_cancel_keyboard(),
+    )
+
+
+@router.message(AdminStates.waiting_contact_description, F.text)
+async def admin_contacts_description_entered(message: Message, state: FSMContext):
+    """Принято описание — создать или обновить контакт."""
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    entry_id = data.get("contact_entry_id")
+    tg_username = (data.get("contact_tg_username") or "").strip()
+    description = (message.text or "").strip()
+    if not tg_username or not description:
+        await message.answer("Тг_ник и описание не должны быть пустыми. Попробуй снова.")
+        return
+    async with get_session() as session:
+        if entry_id is not None:
+            await update_contact_entry(session, entry_id, tg_username=tg_username, description=description)
+            await message.answer("✅ Контакт обновлён.")
+        else:
+            await create_contact_entry(session, tg_username=tg_username, description=description)
+            await message.answer("✅ Контакт добавлен.")
+        visible = await get_contacts_section_visible(session)
+        entries = await get_contact_entries(session, active_only=False)
+    await state.clear()
+    text = await _render_contacts_admin_message(visible, entries)
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_contacts_manage_keyboard(visible, entries),
+    )
 
 
 # ============ CSV Import from CRM ============

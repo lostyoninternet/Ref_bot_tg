@@ -2,8 +2,11 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 
-def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
-    """Main menu reply keyboard."""
+CONTACTS_BUTTON_TEXT = "📞 Остались вопросы? Связаться"
+
+
+def get_main_menu_keyboard(show_contacts: bool = False) -> ReplyKeyboardMarkup:
+    """Main menu reply keyboard. show_contacts: показывать кнопку «Связаться» (управляется админом)."""
     builder = ReplyKeyboardBuilder()
     builder.row(
         KeyboardButton(text="👤 Личный кабинет"),
@@ -16,6 +19,10 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     builder.row(
         KeyboardButton(text="📊 Грейды"),
     )
+    if show_contacts:
+        builder.row(
+            KeyboardButton(text=CONTACTS_BUTTON_TEXT),
+        )
     return builder.as_markup(resize_keyboard=True)
 
 

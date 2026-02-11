@@ -109,6 +109,33 @@ class UtmToken(Base):
         return f"<UtmToken(token={self.token}, type={self.value_type})>"
 
 
+class ContactEntry(Base):
+    """Контакт для кнопки «Связаться»: тг_ник — за что отвечает."""
+    __tablename__ = "contact_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tg_username: Mapped[str] = mapped_column(String(128), nullable=False)  # @ник или имя
+    description: Mapped[str] = mapped_column(String(512), nullable=False)  # за что отвечает
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<ContactEntry(id={self.id}, tg_username={self.tg_username})>"
+
+
+class BotSetting(Base):
+    """Ключ-значение для настроек бота (например видимость раздела контактов)."""
+    __tablename__ = "bot_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<BotSetting(key={self.key})>"
+
+
 class GradeClaim(Base):
     """Фиксация выдачи награды за грейд пользователю."""
     __tablename__ = "grade_claims"

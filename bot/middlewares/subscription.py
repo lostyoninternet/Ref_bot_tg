@@ -3,7 +3,7 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.types import Message, CallbackQuery, TelegramObject
 
 from bot.config import settings
-from bot.services.subscription import check_subscription, get_channel_invite_link
+from bot.services.subscription import check_subscription
 from bot.keyboards.inline import get_subscription_keyboard
 
 
@@ -61,27 +61,25 @@ class SubscriptionMiddleware(BaseMiddleware):
         if is_subscribed:
             return await handler(event, data)
         
-        # User is not subscribed - show subscription message
-        channel_link = await get_channel_invite_link(bot, settings.CHANNEL_ID)
-        
+        # Пользователь не подписан — показываем кнопку заявки на очный этап
+        application_url = settings.get_application_utm_url()
         subscription_text = (
-            "⚠️ Чтобы пользоваться ботом, нужно подписаться на наш канал.\n\n"
-            "Подпишись и нажми «Проверить подписку»."
+            "⚠️ Чтобы пользоваться ботом, нужно пройти очный этап и подписаться на канал.\n\n"
+            "Оставь заявку на очный этап по кнопке ниже. После прохождения — зайди в канал и нажми «Проверить подписку»."
         )
-        
         if isinstance(event, Message):
             await event.answer(
                 subscription_text,
-                reply_markup=get_subscription_keyboard(channel_link)
+                reply_markup=get_subscription_keyboard(application_url)
             )
         elif isinstance(event, CallbackQuery):
             await event.answer(
-                "❌ Сначала подпишись на канал!",
+                "❌ Сначала пройди очный этап и подпишись на канал.",
                 show_alert=True
             )
             await event.message.answer(
                 subscription_text,
-                reply_markup=get_subscription_keyboard(channel_link)
+                reply_markup=get_subscription_keyboard(application_url)
             )
         
         # Don't call the handler - block the request

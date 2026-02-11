@@ -65,6 +65,21 @@ class Settings(BaseSettings):
         ]
         return base + sep + "&".join(parts)
 
+    def get_application_utm_url(self) -> str:
+        """
+        Ссылка «оставить заявку на очный этап» для неподписанных пользователей.
+        utm_source=hr, utm_medium=ref_bot, utm_campaign=tg_bot, utm_content=start
+        """
+        base = (self.REGISTRATION_URL or "").rstrip("/")
+        sep = "&" if "?" in base else "?"
+        parts = [
+            "utm_source=hr",
+            "utm_medium=ref_bot",
+            "utm_campaign=tg_bot",
+            "utm_content=start",
+        ]
+        return base + sep + "&".join(parts)
+
 
 def get_settings() -> Settings:
     return Settings()

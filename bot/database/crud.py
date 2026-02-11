@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import settings
 from bot.crypto import encrypt as crypto_encrypt, decrypt as crypto_decrypt, generate_token
-from .models import User, Referral, Broadcast, Grade, GradeClaim, UtmToken
+from .models import User, Referral, Broadcast, Grade, GradeClaim, UtmToken, ContactEntry, BotSetting
 
 
 def _encryption_enabled() -> bool:
@@ -396,6 +396,109 @@ async def create_broadcast(
     session.add(broadcast)
     await session.flush()
     return broadcast
+
+
+# ============ Contact entries (кнопка «Связаться») ============
+
+CONTACTS_VISIBLE_KEY = "contacts_section_visible"
+
+
+async def get_contacts_section_visible(session: AsyncSession) -> bool:
+    """Видимость кнопки «Связаться» и списка контактов для пользователей."""
+    result = await session.execute(
+        select(BotSetting).where(BotSetting.key == CONTACTS_VISIBLE_KEY)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        return False
+    return row.value.strip().lower() in ("1", "true", "yes")
+
+
+async def set_contacts_section_visible(session: AsyncSession, visible: bool) -> None:
+    """Включить/выключить видимость раздела контактов."""
+    result = await session.execute(
+        select(BotSetting).where(BotSetting.key == CONTACTS_VISIBLE_KEY)
+    )
+    row = result.scalar_one_or_none()
+    value = "1" if visible else "0"
+    if row:
+        row.value = value
+    else:
+        session.add(BotSetting(key=CONTACTS_VISIBLE_KEY, value=value))
+    await session.flush()
+
+
+async def get_contact_entries(
+    session: AsyncSession, active_only: bool = True
+) -> List[ContactEntry]:
+    """Список контактов для кнопки «Связаться», по sort_order."""
+    query = select(ContactEntry).order_by(ContactEntry.sort_order, ContactEntry.id)
+    if active_only:
+        query = query.where(ContactEntry.is_active == True)
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
+async def create_contact_entry(
+    session: AsyncSession,
+    tg_username: str,
+    description: str,
+    sort_order: Optional[int] = None,
+) -> ContactEntry:
+    """Добавить контакт."""
+    if sort_order is None:
+        entries = await get_contact_entries(session, active_only=False)
+        sort_order = max((e.sort_order for e in entries), default=0) + 1
+    entry = ContactEntry(
+        tg_username=tg_username.strip(),
+        description=description.strip(),
+        sort_order=sort_order,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def get_contact_entry_by_id(
+    session: AsyncSession, entry_id: int
+) -> Optional[ContactEntry]:
+    """Получить контакт по id."""
+    result = await session.execute(select(ContactEntry).where(ContactEntry.id == entry_id))
+    return result.scalar_one_or_none()
+
+
+async def update_contact_entry(
+    session: AsyncSession,
+    entry_id: int,
+    tg_username: Optional[str] = None,
+    description: Optional[str] = None,
+    sort_order: Optional[int] = None,
+    is_active: Optional[bool] = None,
+) -> Optional[ContactEntry]:
+    """Обновить контакт."""
+    entry = await get_contact_entry_by_id(session, entry_id)
+    if not entry:
+        return None
+    if tg_username is not None:
+        entry.tg_username = tg_username.strip()
+    if description is not None:
+        entry.description = description.strip()
+    if sort_order is not None:
+        entry.sort_order = sort_order
+    if is_active is not None:
+        entry.is_active = is_active
+    await session.flush()
+    return entry
+
+
+async def delete_contact_entry(session: AsyncSession, entry_id: int) -> bool:
+    """Удалить контакт."""
+    entry = await get_contact_entry_by_id(session, entry_id)
+    if not entry:
+        return False
+    await session.delete(entry)
+    await session.flush()
+    return True
 
 
 # ============ Grade CRUD ============
