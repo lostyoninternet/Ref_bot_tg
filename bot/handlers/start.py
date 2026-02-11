@@ -1,0 +1,274 @@
+from aiogram import Router, Bot, F
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+import re
+
+from bot.config import settings
+from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription
+from bot.database.crud import update_user_email, update_user_phone, normalize_phone
+from bot.keyboards.inline import get_subscription_keyboard, get_cabinet_keyboard
+from bot.keyboards.reply import get_main_menu_keyboard, get_admin_reply_keyboard
+from bot.services.subscription import check_subscription, get_channel_invite_link
+
+
+router = Router(name="start")
+
+
+class RegistrationStates(StatesGroup):
+    """States for registration flow."""
+    waiting_email = State()
+    waiting_phone = State()
+
+
+def is_valid_email(email: str) -> bool:
+    """Validate email format."""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email.strip()))
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, bot: Bot, state: FSMContext):
+    """Handle /start command."""
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name
+    
+    # Check if user is admin
+    is_admin = user_id in settings.ADMIN_IDS
+    
+    # Check subscription to private channel (= passed the event)
+    is_subscribed = await check_subscription(bot, user_id, settings.CHANNEL_ID)
+    
+    if not is_subscribed:
+        # User is not in the private channel = hasn't passed the event yet
+        channel_link = await get_channel_invite_link(bot, settings.CHANNEL_ID)
+        
+        # Create/update user record
+        async with get_session() as session:
+            await get_or_create_user(
+                session,
+                telegram_id=user_id,
+                username=username,
+                first_name=first_name,
+                is_admin=is_admin,
+            )
+        
+        await message.answer(
+            f"👋 Привет, {first_name}!\n\n"
+            "Этот бот — часть реферальной программы Политеха.\n\n"
+            "🎓 <b>Как это работает:</b>\n"
+            "1. Ты получаешь уникальную ссылку для приглашения друзей\n"
+            "2. Друзья регистрируются на очный этап через твою ссылку\n"
+            "3. Когда они проходят очный этап — тебе засчитывается реферал\n"
+            "4. Достигай рубежей и получай награды (мерч, тд и др.)!\n\n"
+            "⚠️ <b>Доступ к боту</b> открывается после прохождения очного этапа "
+            "и вступления в закрытый канал.\n\n"
+            "Если очный этап уже пройден — подпишись на канал и нажми кнопку проверки.",
+            parse_mode="HTML",
+            reply_markup=get_subscription_keyboard(channel_link)
+        )
+        return
+    
+    # User is subscribed = passed the event
+    async with get_session() as session:
+        user, created = await get_or_create_user(
+            session,
+            telegram_id=user_id,
+            username=username,
+            first_name=first_name,
+            is_admin=is_admin,
+        )
+        await update_user_subscription(session, user_id, True)
+        
+        # Check if user has email and phone
+        has_email = bool(user.email)
+        has_phone = bool(user.phone)
+    
+    if created or not has_email:
+        # New user or user without email - request email
+        await state.set_state(RegistrationStates.waiting_email)
+        
+        await message.answer(
+            f"🎉 Отлично, {first_name or 'друг'}!\n\n"
+            "Очный этап пройден. Для участия в реферальной программе и получения наград за рубежи "
+            "введи свой <b>email</b>, который указывал при регистрации на сайте.\n\n"
+            "Это нужно для связки анкеты с ботом.",
+            parse_mode="HTML"
+        )
+        return
+    
+    if not has_phone:
+        # Email есть, номера нет — просим контакт
+        await state.set_state(RegistrationStates.waiting_phone)
+        kb = ReplyKeyboardBuilder()
+        kb.row(KeyboardButton(text="📱 Поделиться контактом", request_contact=True))
+        await message.answer(
+            "Теперь укажи <b>номер телефона</b>.\n\n"
+            "Нажми кнопку ниже, чтобы поделиться контактом, или напиши номер вручную.",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup(resize_keyboard=True)
+        )
+        return
+    
+    # Existing user with email and phone - show cabinet
+    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard()
+    
+    await message.answer(
+        f"👋 С возвращением, {first_name}!\n\n"
+        "Открывай личный кабинет и приглашай друзей на очный этап!",
+        reply_markup=reply_kb
+    )
+    await message.answer(
+        "📋 Личный кабинет:",
+        reply_markup=get_cabinet_keyboard()
+    )
+
+
+@router.message(RegistrationStates.waiting_email)
+async def process_email(message: Message, state: FSMContext, bot: Bot):
+    """Process email input, then ask for phone."""
+    email = message.text.strip() if message.text else ""
+    
+    if not is_valid_email(email):
+        await message.answer(
+            "❌ Неверный формат email. Попробуй ещё раз.\n\n"
+            "Пример: example@mail.ru"
+        )
+        return
+    
+    user_id = message.from_user.id
+    
+    async with get_session() as session:
+        await update_user_email(session, user_id, email)
+    
+    await state.set_state(RegistrationStates.waiting_phone)
+    kb = ReplyKeyboardBuilder()
+    kb.row(KeyboardButton(text="📱 Поделиться контактом", request_contact=True))
+    
+    await message.answer(
+        f"✅ Email <code>{email}</code> сохранён!\n\n"
+        "Теперь укажи <b>номер телефона</b> — он будет в твоей реферальной ссылке.\n\n"
+        "Нажми кнопку ниже или напиши номер вручную.",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(resize_keyboard=True)
+    )
+
+
+def is_valid_phone(phone: str) -> bool:
+    """Check if phone looks valid (digits, maybe +)."""
+    cleaned = normalize_phone(phone)
+    return len(cleaned) >= 10 and cleaned.replace("+", "").isdigit()
+
+
+@router.message(RegistrationStates.waiting_phone, F.contact)
+async def process_phone_contact(message: Message, state: FSMContext, bot: Bot):
+    """Process shared contact (phone from Telegram)."""
+    phone = message.contact.phone_number or ""
+    if message.contact.user_id != message.from_user.id:
+        await message.answer("Пожалуйста, поделись именно своим контактом.")
+        return
+    await _save_phone_and_finish(message, state, phone, bot)
+
+
+@router.message(RegistrationStates.waiting_phone, F.text)
+async def process_phone_text(message: Message, state: FSMContext, bot: Bot):
+    """Process phone typed manually."""
+    phone = (message.text or "").strip()
+    if not is_valid_phone(phone):
+        await message.answer(
+            "❌ Введи корректный номер (например: +79001234567 или 89001234567)."
+        )
+        return
+    await _save_phone_and_finish(message, state, phone, bot)
+
+
+async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str, bot: Bot):
+    """Save phone to DB and show cabinet."""
+    user_id = message.from_user.id
+    
+    async with get_session() as session:
+        await update_user_phone(session, user_id, phone)
+    
+    await state.clear()
+    
+    is_admin = user_id in settings.ADMIN_IDS
+    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard()
+    
+    await message.answer(
+        f"✅ Номер <code>{normalize_phone(phone)}</code> сохранён!\n\n"
+        "Теперь можно участвовать в реферальной программе.\n\n"
+        "📌 <b>Твоя задача:</b>\n"
+        "1. Получить свою реферальную ссылку\n"
+        "2. Приглашать друзей на очный этап\n"
+        "3. Получать рефералов за каждого прошедшего очный этап\n"
+        "4. Достигать рубежей и получать награды!\n\n"
+        "Чем больше друзей пройдёт очный этап — тем больше наград! 🏆",
+        parse_mode="HTML",
+        reply_markup=reply_kb
+    )
+    await message.answer(
+        "📋 Личный кабинет:",
+        reply_markup=get_cabinet_keyboard()
+    )
+
+
+@router.callback_query(F.data == "check_subscription")
+async def check_subscription_callback(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    """Handle subscription check button."""
+    user_id = callback.from_user.id
+    first_name = callback.from_user.first_name
+    
+    is_subscribed = await check_subscription(bot, user_id, settings.CHANNEL_ID)
+    
+    if not is_subscribed:
+        await callback.answer(
+            "❌ Ты ещё не в закрытом канале.\n"
+            "Подпишись после прохождения очного этапа.",
+            show_alert=True
+        )
+        return
+    
+    # Update subscription status
+    async with get_session() as session:
+        await update_user_subscription(session, user_id, True)
+        user = await get_user_by_telegram_id(session, user_id)
+        has_email = bool(user.email) if user else False
+        has_phone = bool(user.phone) if user else False
+    
+    await callback.answer("✅ Подписка подтверждена!")
+    
+    # Delete subscription message
+    await callback.message.delete()
+    
+    if not has_email:
+        await state.set_state(RegistrationStates.waiting_email)
+        await callback.message.answer(
+            f"🎉 Отлично, {first_name or 'друг'}! Добро пожаловать!\n\n"
+            "Для участия в реферальной программе введи свой <b>email</b>, "
+            "который указывал при регистрации на очный этап.",
+            parse_mode="HTML"
+        )
+    elif not has_phone:
+        await state.set_state(RegistrationStates.waiting_phone)
+        kb = ReplyKeyboardBuilder()
+        kb.row(KeyboardButton(text="📱 Поделиться контактом", request_contact=True))
+        await callback.message.answer(
+            "Укажи <b>номер телефона</b>: нажми кнопку или напиши номер вручную.",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup(resize_keyboard=True)
+        )
+    else:
+        is_admin = user_id in settings.ADMIN_IDS
+        reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard()
+        await callback.message.answer(
+            "🎉 Отлично! Подписка подтверждена.\n\n"
+            "Теперь у тебя есть доступ ко всем функциям бота.",
+            reply_markup=reply_kb
+        )
+        await callback.message.answer(
+            "📋 Личный кабинет:",
+            reply_markup=get_cabinet_keyboard()
+        )

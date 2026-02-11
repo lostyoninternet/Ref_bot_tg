@@ -1,0 +1,28 @@
+# Секреты — не коммитить
+.env
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# База SQLite — не коммитить (личные данные, создаётся на сервере)
+referral_bot.db
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
