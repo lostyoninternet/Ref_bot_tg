@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 import re
 
 from bot.config import settings
-from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription
+from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription, get_contacts_section_visible
 from bot.database.crud import update_user_email, update_user_phone, normalize_phone
 from bot.keyboards.inline import get_subscription_keyboard, get_cabinet_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard, get_admin_reply_keyboard
@@ -111,8 +111,10 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
         )
         return
     
-    # Existing user with email and phone - show cabinet (без постоянных кнопок у пользователей)
-    reply_kb = get_admin_reply_keyboard() if is_admin else ReplyKeyboardRemove()
+    # Existing user with email and phone - show cabinet
+    async with get_session() as session:
+        show_contacts = await get_contacts_section_visible(session)
+    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
     await message.answer(
         f"👋 С возвращением, {first_name}!\n\n"
         "Открывай личный кабинет и приглашай друзей на очный этап!",
@@ -191,7 +193,9 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
     
     await state.clear()
     is_admin = user_id in settings.ADMIN_IDS
-    reply_kb = get_admin_reply_keyboard() if is_admin else ReplyKeyboardRemove()
+    async with get_session() as session:
+        show_contacts = await get_contacts_section_visible(session)
+    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
 
     # Первое сообщение: текст + фото рюкзака
     caption = (
@@ -272,7 +276,9 @@ async def check_subscription_callback(callback: CallbackQuery, bot: Bot, state: 
         )
     else:
         is_admin = user_id in settings.ADMIN_IDS
-        reply_kb = get_admin_reply_keyboard() if is_admin else ReplyKeyboardRemove()
+        async with get_session() as session:
+            show_contacts = await get_contacts_section_visible(session)
+        reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
         await callback.message.answer(
             "🎉 Отлично! Подписка подтверждена.\n\n"
             "Теперь у тебя есть доступ ко всем функциям бота.",

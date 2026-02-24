@@ -10,6 +10,7 @@ from bot.database import (
     get_referral_tokens_for_user,
     decrypt_email,
     decrypt_phone,
+    decrypt_username,
 )
 
 
@@ -23,14 +24,16 @@ async def cmd_my_referrals(message: Message):
     async with get_session() as session:
         user = await get_user_by_telegram_id(session, user_id)
         if user and user.email and user.phone:
-            token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+            token_medium, token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+            if not token_medium and user.username:
+                token_medium = decrypt_username(user.username) or user.username or ""
             if not token_campaign and user.email:
                 token_campaign = decrypt_email(user.email) or user.email
             if not token_content and user.phone:
                 token_content = decrypt_phone(user.phone) or user.phone
             ref_link = (
                 settings.get_referral_link(
-                    username=user.username,
+                    token_medium=token_medium or "",
                     token_campaign=token_campaign or "",
                     token_content=token_content or "",
                 )
@@ -63,7 +66,7 @@ async def cmd_my_referrals(message: Message):
         for i, ref in enumerate(referrals[:20], 1):  # Show max 20
             referred_user = await get_user_by_telegram_id(session, ref.referred_id)
             if referred_user:
-                name = referred_user.first_name or referred_user.username or "Аноним"
+                name = referred_user.first_name or decrypt_username(referred_user.username) or "Аноним"
                 date = ref.created_at.strftime("%d.%m.%Y")
                 text += f"{i}. {name} — {date}\n"
     

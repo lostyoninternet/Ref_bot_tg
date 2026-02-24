@@ -19,6 +19,7 @@ from bot.database import (
     get_contact_entries,
     decrypt_email,
     decrypt_phone,
+    decrypt_username,
 )
 from bot.database.crud import (
     get_user_rank,
@@ -156,10 +157,12 @@ async def cmd_stats(message: Message):
 
 
 async def _get_user_referral_link(session, user) -> str | None:
-    """Строит UTM-ссылку: при включённом шифровании — короткие токены, иначе — открытые данные (legacy)."""
+    """Строит UTM-ссылку: при включённом шифровании — короткие токены (ник, почта, телефон), иначе — открытые данные."""
     if not user or not user.email or not user.phone:
         return None
-    token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+    token_medium, token_campaign, token_content = await get_referral_tokens_for_user(session, user)
+    if not token_medium and user.username:
+        token_medium = decrypt_username(user.username) or user.username or ""
     if not token_campaign and user.email:
         token_campaign = decrypt_email(user.email) or user.email
     if not token_content and user.phone:
@@ -167,7 +170,7 @@ async def _get_user_referral_link(session, user) -> str | None:
     if not token_campaign or not token_content:
         return None
     return settings.get_referral_link(
-        username=user.username,
+        token_medium=token_medium or "",
         token_campaign=token_campaign,
         token_content=token_content,
     )
@@ -263,7 +266,7 @@ async def show_leaderboard(callback: CallbackQuery):
     
     for i, (user, count) in enumerate(top_users, 1):
         medal = medals[i-1] if i <= 3 else f"{i}."
-        name = user.first_name or user.username or f"User {user.telegram_id}"
+        name = user.first_name or decrypt_username(user.username) or f"User {user.telegram_id}"
         leaderboard_text += f"{medal} {name} — <b>{count}</b> рефералов\n"
     
     await callback.message.edit_text(

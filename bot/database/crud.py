@@ -42,6 +42,11 @@ def decrypt_phone(encrypted_phone: Optional[str]) -> str:
     return ( _decrypt(encrypted_phone) if encrypted_phone else "" ) or ""
 
 
+def decrypt_username(encrypted_username: Optional[str]) -> str:
+    """Расшифровать ник Telegram для отображения и экспорта."""
+    return ( _decrypt(encrypted_username) if encrypted_username else "" ) or ""
+
+
 # ============ User CRUD ============
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Optional[User]:
@@ -64,19 +69,21 @@ async def get_or_create_user(
     user = await get_user_by_telegram_id(session, telegram_id)
     
     if user:
-        # Update user info if changed
-        if username and user.username != username:
-            user.username = username
+        # Update user info if changed (username храним зашифрованным)
+        if username is not None:
+            enc_username = _encrypt(username.strip()) if username.strip() else None
+            if user.username != enc_username:
+                user.username = enc_username
         if first_name and user.first_name != first_name:
             user.first_name = first_name
         await session.flush()
         return user, False
     
-    # Create new user (referrer_id НЕ устанавливается при создании - 
-    # будет установлен через CSV из CRM)
+    # Create new user (referrer_id НЕ устанавливается при создании — будет установлен через CSV из CRM)
+    enc_username = _encrypt(username.strip()) if (username and username.strip()) else None
     user = User(
         telegram_id=telegram_id,
-        username=username,
+        username=enc_username,
         first_name=first_name,
         referrer_id=None,  # Устанавливается через CSV
         is_admin=is_admin,
@@ -158,8 +165,8 @@ async def update_user_phone(session: AsyncSession, telegram_id: int, phone: str)
 async def get_or_create_utm_token(
     session: AsyncSession, encrypted_value: str, value_type: str
 ) -> str:
-    """Вернуть короткий токен для зашифрованного значения (email или phone). Один значение → один токен."""
-    if not encrypted_value or value_type not in ("email", "phone"):
+    """Вернуть короткий токен для зашифрованного значения (email, phone или username). Один значение → один токен."""
+    if not encrypted_value or value_type not in ("email", "phone", "username"):
         return ""
     result = await session.execute(
         select(UtmToken).where(
@@ -213,20 +220,26 @@ async def get_referrer_by_utm_tokens(
 
 async def get_referral_tokens_for_user(
     session: AsyncSession, user: User
-) -> Tuple[str, str]:
+) -> Tuple[str, str, str]:
     """
-    Вернуть (token_campaign, token_content) для реферальной ссылки.
-    Если email/phone не заданы или шифрование выключено — пустые строки.
+    Вернуть (token_medium, token_campaign, token_content) для реферальной ссылки.
+    token_medium = ник TG, token_campaign = email, token_content = телефон (все — токены или открытые при выключенном шифровании).
     """
+    token_medium = ""
     token_campaign = ""
     token_content = ""
-    if not _encryption_enabled():
-        return token_campaign, token_content
-    if user.email:
-        token_campaign = await get_or_create_utm_token(session, user.email, "email")
-    if user.phone:
-        token_content = await get_or_create_utm_token(session, user.phone, "phone")
-    return token_campaign, token_content
+    if _encryption_enabled():
+        if user.username:
+            token_medium = await get_or_create_utm_token(session, user.username, "username")
+        if user.email:
+            token_campaign = await get_or_create_utm_token(session, user.email, "email")
+        if user.phone:
+            token_content = await get_or_create_utm_token(session, user.phone, "phone")
+    else:
+        token_medium = decrypt_username(user.username) or (user.username or "")
+        token_campaign = decrypt_email(user.email) or (user.email or "")
+        token_content = decrypt_phone(user.phone) or (user.phone or "")
+    return token_medium, token_campaign, token_content
 
 
 async def get_all_utm_tokens_for_key_export(

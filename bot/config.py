@@ -47,19 +47,19 @@ class Settings(BaseSettings):
     
     def get_referral_link(
         self,
-        username: Optional[str] = None,
+        token_medium: Optional[str] = None,
         token_campaign: Optional[str] = None,
         token_content: Optional[str] = None,
     ) -> str:
         """
-        Генерирует UTM-ссылку для реферала (в UTM — короткие токены, не открытые данные):
-        utm_source=referal, utm_medium=ник_тг, utm_campaign=токен_почты, utm_content=токен_номера
+        Генерирует UTM-ссылку для реферала (в UTM — короткие токены: ник, почта, телефон).
+        utm_source=referal, utm_medium=токен_ника, utm_campaign=токен_почты, utm_content=токен_номера
         """
         base = self.REGISTRATION_URL.rstrip("/")
         sep = "&" if "?" in base else "?"
         parts = [
             "utm_source=referal",
-            f"utm_medium={quote((username or '').strip())}",
+            f"utm_medium={quote((token_medium or '').strip())}",
             f"utm_campaign={quote((token_campaign or '').strip())}",
             f"utm_content={quote((token_content or '').strip())}",
         ]

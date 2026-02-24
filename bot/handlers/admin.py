@@ -24,6 +24,7 @@ from bot.database import (
     get_referrer_by_utm_tokens,
     decrypt_email,
     decrypt_phone,
+    decrypt_username,
     get_all_utm_tokens_for_key_export,
     get_contacts_section_visible,
     set_contacts_section_visible,
@@ -338,7 +339,7 @@ async def admin_grade_users(callback: CallbackQuery):
         builder = InlineKeyboardBuilder()
         for user, ref_count in users_with_count:
             has_claim = await has_grade_claim(session, user.telegram_id, grade_id)
-            name = (user.first_name or user.username or f"id{user.telegram_id}")[:25]
+            name = (user.first_name or decrypt_username(user.username) or f"id{user.telegram_id}")[:25]
             if has_claim:
                 builder.row(
                     InlineKeyboardButton(
@@ -409,7 +410,7 @@ async def admin_grade_claim(callback: CallbackQuery):
         builder = InlineKeyboardBuilder()
         for user, ref_count in users_with_count:
             has_claim = await has_grade_claim(session, user.telegram_id, grade_id)
-            name = (user.first_name or user.username or f"id{user.telegram_id}")[:25]
+            name = (user.first_name or decrypt_username(user.username) or f"id{user.telegram_id}")[:25]
             if has_claim:
                 builder.row(
                     InlineKeyboardButton(
@@ -935,7 +936,7 @@ async def export_users(callback_or_message: CallbackQuery | Message):
             ref_count = await get_user_referral_count(session, user.telegram_id)
             writer.writerow([
                 user.telegram_id,
-                user.username or "",
+                decrypt_username(user.username) or "",
                 user.first_name or "",
                 decrypt_email(user.email) or "",
                 decrypt_phone(user.phone) or "",
