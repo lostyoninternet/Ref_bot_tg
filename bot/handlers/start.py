@@ -197,8 +197,8 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
         show_contacts = await get_contacts_section_visible(session)
     reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
 
-    # Первое сообщение: текст + фото рюкзака
-    caption = (
+    # 1) Первое сообщение — только текст
+    await message.answer(
         f"✅ Номер <code>{normalize_phone(phone)}</code> сохранён!\n\n"
         "Теперь можно участвовать в реферальной программе.\n\n"
         "📌 <b>Твоя задача:</b>\n"
@@ -207,20 +207,17 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
         "3. За каждого прошедшего тебе начисляются баллы\n"
         "4. Набираешь больше баллов — повышаешь грейд!\n\n"
         "🎁 Каждый новый грейд = классный лимитированный мерч от «Алабуги».\n\n"
-        "Самое приятное — уже за 5 человек ты переходишь на 1 грейд и получаешь классный рюкзак 🎒 (на фото ниже)."
+        "Самое приятное — уже за 5 человек ты переходишь на 1 грейд и получаешь классный рюкзак 🎒 (фото ниже).",
+        parse_mode="HTML",
+        reply_markup=reply_kb,
     )
+
+    # 2) Второе сообщение — картинка рюкзака
     backpack_path = Path(__file__).resolve().parent.parent.parent / "img" / "backpack.png"
     if backpack_path.is_file():
-        await message.answer_photo(
-            photo=FSInputFile(backpack_path),
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=reply_kb,
-        )
-    else:
-        await message.answer(caption, parse_mode="HTML", reply_markup=reply_kb)
+        await message.answer_photo(photo=FSInputFile(backpack_path))
 
-    # Второе сообщение
+    # 3) Третье сообщение — текст и кнопка кабинета
     await message.answer(
         "Это не розыгрыш — ты точно знаешь, сколько нужно пригласить, чтобы получить конкретный приз.\n\n"
         "Сколько друзей приведёшь — такой уровень и займёшь.\n\n"
