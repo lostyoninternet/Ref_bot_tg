@@ -1,5 +1,6 @@
+from pathlib import Path
 from aiogram import Router, Bot, F
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -7,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 import re
 
 from bot.config import settings
-from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription, get_contacts_section_visible
+from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription
 from bot.database.crud import update_user_email, update_user_phone, normalize_phone
 from bot.keyboards.inline import get_subscription_keyboard, get_cabinet_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard, get_admin_reply_keyboard
@@ -110,10 +111,8 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
         )
         return
     
-    # Existing user with email and phone - show cabinet
-    async with get_session() as session:
-        show_contacts = await get_contacts_section_visible(session)
-    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
+    # Existing user with email and phone - show cabinet (без постоянных кнопок у пользователей)
+    reply_kb = get_admin_reply_keyboard() if is_admin else ReplyKeyboardRemove()
     await message.answer(
         f"👋 С возвращением, {first_name}!\n\n"
         "Открывай личный кабинет и приглашай друзей на очный этап!",
@@ -192,24 +191,37 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
     
     await state.clear()
     is_admin = user_id in settings.ADMIN_IDS
-    async with get_session() as session:
-        show_contacts = await get_contacts_section_visible(session)
-    reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
-    await message.answer(
+    reply_kb = get_admin_reply_keyboard() if is_admin else ReplyKeyboardRemove()
+
+    # Первое сообщение: текст + фото рюкзака
+    caption = (
         f"✅ Номер <code>{normalize_phone(phone)}</code> сохранён!\n\n"
         "Теперь можно участвовать в реферальной программе.\n\n"
         "📌 <b>Твоя задача:</b>\n"
-        "1. Получить свою реферальную ссылку\n"
-        "2. Приглашать друзей на очный этап\n"
-        "3. Получать баллы за каждого прошедшего очный этап\n"
-        "4. Достигать рубежей и получать награды!\n\n"
-        "Чем больше друзей пройдёт очный этап — тем больше наград! 🏆",
-        parse_mode="HTML",
-        reply_markup=reply_kb
+        "1. Получаешь свою реферальную ссылку\n"
+        "2. Приглашаешь друзей на очный этап по своей ссылке\n"
+        "3. За каждого прошедшего тебе начисляются баллы\n"
+        "4. Набираешь больше баллов — повышаешь грейд!\n\n"
+        "🎁 Каждый новый грейд = классный лимитированный мерч от «Алабуги».\n\n"
+        "Самое приятное — уже за 5 человек ты переходишь на 1 грейд и получаешь классный рюкзак 🎒 (на фото ниже)."
     )
+    backpack_path = Path(__file__).resolve().parent.parent.parent / "img" / "backpack.png"
+    if backpack_path.is_file():
+        await message.answer_photo(
+            photo=FSInputFile(backpack_path),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=reply_kb,
+        )
+    else:
+        await message.answer(caption, parse_mode="HTML", reply_markup=reply_kb)
+
+    # Второе сообщение
     await message.answer(
-        "📋 Личный кабинет:",
-        reply_markup=get_cabinet_keyboard()
+        "Это не розыгрыш — ты точно знаешь, сколько нужно пригласить, чтобы получить конкретный приз.\n\n"
+        "Сколько друзей приведёшь — такой уровень и займёшь.\n\n"
+        "Готов забрать свой рюкзак и пойти дальше?",
+        reply_markup=get_cabinet_keyboard(),
     )
 
 
@@ -260,9 +272,7 @@ async def check_subscription_callback(callback: CallbackQuery, bot: Bot, state: 
         )
     else:
         is_admin = user_id in settings.ADMIN_IDS
-        async with get_session() as session:
-            show_contacts = await get_contacts_section_visible(session)
-        reply_kb = get_admin_reply_keyboard() if is_admin else get_main_menu_keyboard(show_contacts=show_contacts)
+        reply_kb = get_admin_reply_keyboard() if is_admin else ReplyKeyboardRemove()
         await callback.message.answer(
             "🎉 Отлично! Подписка подтверждена.\n\n"
             "Теперь у тебя есть доступ ко всем функциям бота.",
