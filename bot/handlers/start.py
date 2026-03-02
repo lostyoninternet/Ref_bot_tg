@@ -10,7 +10,7 @@ import re
 from bot.config import settings
 from bot.database import get_session, get_or_create_user, get_user_by_telegram_id, update_user_subscription, get_contacts_section_visible
 from bot.database.crud import update_user_email, update_user_phone, normalize_phone
-from bot.keyboards.inline import get_subscription_keyboard, get_cabinet_keyboard
+from bot.keyboards.inline import get_cabinet_keyboard
 from bot.keyboards.reply import get_main_menu_keyboard, get_admin_reply_keyboard
 from bot.services.subscription import check_subscription
 
@@ -44,8 +44,7 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
     is_subscribed = await check_subscription(bot, user_id, settings.CHANNEL_ID)
     
     if not is_subscribed:
-        # Пользователь ещё не в закрытом канале — предлагаем заявку на очный этап
-        application_url = settings.get_application_utm_url()
+        # Пользователь ещё не в закрытом канале — только текст, без кнопок
         async with get_session() as session:
             await get_or_create_user(
                 session,
@@ -56,17 +55,10 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
             )
         await message.answer(
             f"👋 Привет, {first_name}!\n\n"
-            "Этот бот — часть реферальной программы «Алабуга Политех».\n\n"
-            "🎓 <b>Как это работает:</b>\n"
-            "1. Ты получаешь уникальную ссылку для приглашения друзей\n"
-            "2. Друзья регистрируются на очный этап через твою ссылку\n"
-            "3. Когда они проходят очный этап — тебе засчитывается реферал (человек, которого ты привел)\n"
-            "4. Достигай рубежей (рубеж — 10 твоих рефералов) и получай награды (например, мерч)!\n\n"
-            "⚠️ <b>Доступ к боту</b> открывается после прохождения очного этапа "
-            "и вступления в закрытый канал.\n\n"
-            "Оставь заявку на очный этап по кнопке ниже. После прохождения очного этапа — зайди в бота и нажми «Проверить подписку».",
+            "Ты попал в бот реферальной программы.\n\n"
+            "⛔️ Обрати внимание:\n"
+            "Сейчас функции бота для тебя закрыты. Инструменты для приглашения друзей доступны только участникам нашего клуба.\n",
             parse_mode="HTML",
-            reply_markup=get_subscription_keyboard(application_url)
         )
         return
     
@@ -220,7 +212,7 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
     # 3) Третье сообщение — текст и кнопка кабинета
     await message.answer(
         "Это не розыгрыш — ты точно знаешь, сколько нужно пригласить, чтобы получить конкретный приз.\n\n"
-        "Сколько друзей приведёшь — такой уровень и займёшь.\n\n"
+        "Сколько друзей приведёшь — такой грейд и закрепишь за собой.\n\n"
         "Готов забрать свой рюкзак и пойти дальше?",
         reply_markup=get_cabinet_keyboard(),
     )
