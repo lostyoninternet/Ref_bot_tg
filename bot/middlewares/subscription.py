@@ -62,7 +62,7 @@ class SubscriptionMiddleware(BaseMiddleware):
         
         # Пользователь не подписан — только текст, без кнопок
         subscription_text = (
-            "⚠️ Чтобы пользоваться ботом, нужно пройти очный этап и подписаться на канал.\n\n"
+            "⚠️ Чтобы пользоваться ботом, нужно быть участником нашего клуба.\n\n"
         )
         if isinstance(event, Message):
             await event.answer(subscription_text)
