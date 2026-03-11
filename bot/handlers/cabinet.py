@@ -227,15 +227,14 @@ async def show_my_link(callback: CallbackQuery):
 @router.message(Command("mylink"))
 @router.message(F.text == "🔗 Моя ссылка")
 async def cmd_mylink(message: Message):
-    """Show referral link via command."""
+    """Show referral link via command or reply button «Моя ссылка»."""
     user_id = message.from_user.id
     
     async with get_session() as session:
         user = await get_user_by_telegram_id(session, user_id)
+        ref_link = await _get_user_referral_link(session, user)
     
-    ref_link = _get_user_referral_link(user)
-    
-    if not user or not user.email or not user.phone:
+    if not user or not user.email or not user.phone or not ref_link:
         await message.answer(
             "🔗 Чтобы получить реферальную ссылку, укажи email и номер телефона. Напиши /start и пройди регистрацию."
         )
