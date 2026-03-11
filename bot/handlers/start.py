@@ -204,10 +204,13 @@ async def _save_phone_and_finish(message: Message, state: FSMContext, phone: str
         reply_markup=reply_kb,
     )
 
-    # 2) Второе сообщение — картинка рюкзака
-    backpack_path = Path(__file__).resolve().parent.parent.parent / "img" / "backpack.png"
-    if backpack_path.is_file():
-        await message.answer_photo(photo=FSInputFile(backpack_path))
+    # 2) Второе сообщение — стикер из стикерпака или картинка рюкзака
+    if settings.WELCOME_STICKER_FILE_ID:
+        await message.answer_sticker(sticker=settings.WELCOME_STICKER_FILE_ID)
+    else:
+        backpack_path = Path(__file__).resolve().parent.parent.parent / "img" / "backpack.png"
+        if backpack_path.is_file():
+            await message.answer_photo(photo=FSInputFile(backpack_path))
 
     # 3) Третье сообщение — текст и кнопка кабинета
     await message.answer(

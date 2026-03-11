@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # URL сайта для регистрации на очный этап
     REGISTRATION_URL: str = "https://example.com/register"
 
+    # Стикер после регистрации (из твоего стикерпака). Укажи file_id стикера — бот отправит его вместо картинки рюкзака.
+    WELCOME_STICKER_FILE_ID: Optional[str] = None
+
     @field_validator('ADMIN_IDS', mode='before')
     @classmethod
     def parse_admin_ids(cls, v):
