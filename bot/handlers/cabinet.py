@@ -33,7 +33,7 @@ from bot.keyboards.inline import (
     get_back_to_cabinet_keyboard,
     get_profile_edit_keyboard,
 )
-from bot.keyboards.reply import CONTACTS_BUTTON_TEXT
+from bot.keyboards.reply import CONTACTS_BUTTON_TEXT, get_main_menu_keyboard, get_admin_reply_keyboard
 
 
 router = Router(name="cabinet")
@@ -80,12 +80,21 @@ async def show_contacts_list(message: Message):
 @router.message(Command("cabinet"))
 @router.message(F.text == "👤 Личный кабинет")
 async def cmd_cabinet(message: Message):
-    """Show personal cabinet."""
+    """Show personal cabinet. Обновляем reply-клавиатуру (чтобы подтянулась кнопка «Связаться», если админ её включил)."""
+    user_id = message.from_user.id
+    is_admin = user_id in settings.ADMIN_IDS
+    if is_admin:
+        reply_kb = get_admin_reply_keyboard()
+    else:
+        async with get_session() as session:
+            show_contacts = await get_contacts_section_visible(session)
+        reply_kb = get_main_menu_keyboard(show_contacts=show_contacts)
     await message.answer(
         "📋 Личный кабинет\n\n"
         "Выбери нужный раздел:",
-        reply_markup=get_cabinet_keyboard()
+        reply_markup=reply_kb,
     )
+    await message.answer("👇 Выбери раздел:", reply_markup=get_cabinet_keyboard())
 
 
 @router.callback_query(F.data == "back_to_cabinet")
